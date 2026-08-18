@@ -1,0 +1,45 @@
+name: Clean publication history
+
+on:
+  push:
+    paths:
+      - '.github/workflows/clean-publish-history.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  clean:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Replace temporary upload history with one clean initial commit
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          rm -f .github/workflows/clean-publish-history.yml
+          find .github -type d -empty -delete 2>/dev/null || true
+
+          # Safety checks: only rewrite after the finished project is present.
+          test -f app.py
+          test -f requirements.txt
+          test -f README.md
+          test -f 'Iniciar Neves System.bat'
+          test -f demo/preparar_demo.py
+          test ! -d .bootstrap
+          test ! -f database/sistema.db
+
+          git config user.name 'GuilhermeNevesDev'
+          git config user.email 'guilhermeneves2017@gmail.com'
+
+          git checkout --orphan neves-clean-main
+          git rm -r --cached . >/dev/null 2>&1 || true
+          git add -A
+          git commit -m 'Neves System V6.8 - GitHub Demo'
+          git branch -M main
+          git push --force origin main
