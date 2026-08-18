@@ -1,0 +1,99 @@
+name: Finalize Neves System Demo
+
+on:
+  push:
+    paths:
+      - '.github/workflows/finalize-bootstrap.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  finalize:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Rebuild and validate project source
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          rebuild_group() {
+            local pattern="$1"
+            local label="$2"
+            local outfile="/tmp/${label}.zip"
+            local files=()
+            shopt -s nullglob
+            files=( $pattern )
+            shopt -u nullglob
+            if [ ${#files[@]} -eq 0 ]; then
+              return 1
+            fi
+            echo "Testing ${label}: ${#files[@]} file(s)"
+            cat "${files[@]}" | tr -d '\r\n\t ' | base64 -d > "$outfile" 2>/dev/null || return 1
+            unzip -tq "$outfile" >/dev/null 2>&1 || return 1
+            echo "$outfile"
+            return 0
+          }
+
+          SOURCE=""
+
+          # Prefer the verified small chunks only when the complete 27-file set exists.
+          SAFE_COUNT=$(find .bootstrap -maxdepth 1 -type f -name 'safe_*.b64' 2>/dev/null | wc -l | tr -d ' ')
+          if [ "$SAFE_COUNT" = "27" ]; then
+            if RESULT=$(rebuild_group '.bootstrap/safe_*.b64' 'safe-source'); then
+              SOURCE=$(printf '%s\n' "$RESULT" | tail -n 1)
+            fi
+          fi
+
+          # Compatibility with the upload attempts already present in the repo.
+          if [ -z "$SOURCE" ]; then
+            for spec in \
+              '.bootstrap/pkg_*.b64:pkg-source' \
+              '.bootstrap/source_*.b64:source-source' \
+              '.bootstrap/full*.b64:full-source' \
+              '.bootstrap/part*.b64:part-source'
+            do
+              pattern="${spec%%:*}"
+              label="${spec##*:}"
+              if RESULT=$(rebuild_group "$pattern" "$label"); then
+                SOURCE=$(printf '%s\n' "$RESULT" | tail -n 1)
+                break
+              fi
+            done
+          fi
+
+          if [ -z "$SOURCE" ]; then
+            echo 'No complete and valid source archive was found.' >&2
+            exit 1
+          fi
+
+          mkdir -p /tmp/neves-source
+          unzip -q "$SOURCE" -d /tmp/neves-source
+
+          test -f /tmp/neves-source/app.py
+          test -f /tmp/neves-source/requirements.txt
+          test -f '/tmp/neves-source/Iniciar Neves System.bat'
+          test -f /tmp/neves-source/demo/preparar_demo.py
+          test -f /tmp/neves-source/demo/reconstruir_arquivos.py
+
+          # Remove the temporary bootstrap repository state, but never touch .git.
+          find . -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
+          cp -a /tmp/neves-source/. .
+
+          # Basic source checks before publishing.
+          python -m compileall -q app.py routes services converters demo
+
+          # Ensure private/runtime data is not part of the commit.
+          test ! -f database/sistema.db
+          test -f .gitignore
+
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'Publish Neves System V6.8 GitHub Demo'
+          git push
